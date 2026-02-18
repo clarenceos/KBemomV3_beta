@@ -29,7 +29,7 @@
 const{useState,useEffect,useRef,useCallback,useMemo}=React;
 
 /* ═══ CONSTANTS & UTILS ═══ */
-const STORE_EX="emom-exercises",STORE_WK="emom-saved-workouts",STORE_LOGS="emom-logs",STORE_FAVS="emom-favorites",STORE_MUTE="emom-muted",STORE_CX="emom-complexes",STORE_ACCENT="emom-accent",STORE_SOUND="emom-sound",STORE_DISMISS="emom-dismiss-install";
+const STORE_EX="emom-exercises",STORE_WK="emom-saved-workouts",STORE_LOGS="emom-logs",STORE_FAVS="emom-favorites",STORE_MUTE="emom-muted",STORE_CX="emom-complexes",STORE_ACCENT="emom-accent",STORE_SOUND="emom-sound",STORE_DISMISS="emom-dismiss-install",STORE_CD="emom-start-countdown",STORE_DEL_CX="emom-deleted-cx";
 const DEF_REPS=10,DEF_WEIGHT=12;
 const DEF_EXERCISES=["Two-hand swing","One-hand swing","Deadlift","Clean","Goblet squat","Double kettlebell front squat","Split squat","Bulgarian split squat","Strict overhead press","Push press","Floor press","Farmer carry","Suitcase carry","Rack carry","Overhead carry","Snatch","High pull","Clean and press","Thruster","Bent-over row","Renegade row","Gorilla row","Turkish get-up","Windmill","Russian twist","Halo","Lunges","Reverse lunges","Alternating swing","Clean and squat"];
 const DEF_COMPLEXES=[{id:1,name:"ABC Complex",weight:16,movements:[{name:"Clean",reps:2},{name:"Strict overhead press",reps:1},{name:"Goblet squat",reps:3}]}];
@@ -68,9 +68,10 @@ const isStandalone=()=>{try{return window.matchMedia("(display-mode: standalone)
 /* ═══ AUDIO ═══ */
 function mkBeep(acRef,p,type,muted){
   if(muted&&muted.current)return;
+  if(!acRef||!acRef.current)return;
   try{
-    if(!acRef.current)acRef.current=new(window.AudioContext||window.webkitAudioContext)();
-    const ac=acRef.current,go=type==="go",f=go?p.gF:p.cF,d=go?p.gD:p.cD,v=go?p.gV:p.cV;
+    const ac=acRef.current;if(ac.state==="suspended")ac.resume();
+    const go=type==="go",f=go?p.gF:p.cF,d=go?p.gD:p.cD,v=go?p.gV:p.cV;
     const tone=(freq,dur,vol,del=0)=>{const o=ac.createOscillator(),g=ac.createGain();o.type=p.wave;o.connect(g);g.connect(ac.destination);o.frequency.value=freq;g.gain.value=vol;if(p.chirp){o.frequency.setValueAtTime(freq,ac.currentTime+del);o.frequency.linearRampToValueAtTime(freq*1.5,ac.currentTime+del+dur/1000)}o.start(ac.currentTime+del);o.stop(ac.currentTime+del+dur/1000)};
     tone(f,d,v);if(p.dbl&&go)tone(f*1.2,d,v,0.15);
   }catch{}
@@ -109,9 +110,12 @@ function useFavs(){
 }
 function useCxLib(){
   const[userCxs,setUserCxs]=useState(()=>store.get(STORE_CX)||[]);
-  const cxs=useMemo(()=>{const merged=[...DEF_COMPLEXES];userCxs.forEach(uc=>{if(!merged.some(c=>c.name.toLowerCase()===uc.name.toLowerCase()))merged.push(uc)});return merged},[userCxs]);
+  const[delCxs,setDelCxs]=useState(()=>store.get(STORE_DEL_CX)||[]);
+  const cxs=useMemo(()=>{const merged=DEF_COMPLEXES.filter(c=>!delCxs.includes(c.name.toLowerCase()));userCxs.forEach(uc=>{if(!merged.some(c=>c.name.toLowerCase()===uc.name.toLowerCase()))merged.push(uc)});return merged},[userCxs,delCxs]);
   const save=useCallback(cx=>{setUserCxs(p=>{const idx=p.findIndex(c=>c.name.toLowerCase()===cx.name.toLowerCase());let n;if(idx>=0){n=[...p];n[idx]={...cx,id:p[idx].id}}else{n=[...p,{...cx,id:Date.now()}]}store.set(STORE_CX,n);return n})},[]);
-  return{cxs,save};
+  const del=useCallback(name=>{const lo=name.toLowerCase();setUserCxs(p=>{const n=p.filter(c=>c.name.toLowerCase()!==lo);store.set(STORE_CX,n);return n});if(DEF_COMPLEXES.some(c=>c.name.toLowerCase()===lo)){setDelCxs(p=>{const n=[...p,lo];store.set(STORE_DEL_CX,n);return n})}},[]); 
+  const restoreDefaults=useCallback(()=>{setDelCxs([]);store.set(STORE_DEL_CX,[])},[]);
+  return{cxs,save,del,restoreDefaults};
 }
 function useSwipe(onBack){
   const ref=useRef(null);
@@ -179,7 +183,7 @@ function ProgBar({current,total,sets,accent}){
       <div style={{height:"100%",width:`${pct}%`,background:accent,borderRadius:2,position:"relative",minWidth:4,transition:"width 0.3s"}}>
         <div style={{position:"absolute",right:-1,top:-3,width:10,height:10,background:accent,borderRadius:"50%",boxShadow:`0 0 10px ${accent}99,0 0 20px ${accent}55`,animation:"glowPulse 1.5s infinite","--glow":`${accent}99`,"--glow2":`${accent}55`}}/>
       </div>
-      {sets>1&&Array.from({length:sets-1},(_,i)=>{const pos=((i+1)/sets)*100;return <div key={i} style={{position:"absolute",top:-4,left:`${pos}%`,width:1,height:12,background:"#262626"}}/>})}
+      {sets>1&&Array.from({length:sets-1},(_,i)=>{const pos=((i+1)/sets)*100;return <div key={i} style={{position:"absolute",top:-6,left:`${pos}%`,width:2,height:16,background:"#666",borderRadius:1}}/>})}
     </div>
     <div style={{fontSize:8,color:"#333",textAlign:"right",marginTop:2}}>{current+1} / {total}</div>
   </div>);
@@ -234,7 +238,7 @@ function SetsSelector({sets,onChange}){
   return(<div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:16,marginBottom:12}}>
     <button onClick={()=>onChange(Math.max(1,sets-1))} style={S.setsBtn}>−</button>
     <div style={{textAlign:"center",minWidth:60}}><span style={{fontSize:24,fontWeight:800,color:"#fafafa"}}>{sets}</span><span style={{fontSize:11,color:"#555",letterSpacing:2,display:"block",marginTop:2}}>{sets===1?"SET":"SETS"}</span></div>
-    <button onClick={()=>onChange(Math.min(10,sets+1))} style={S.setsBtn}>+</button>
+    <button onClick={()=>onChange(Math.min(100,sets+1))} style={S.setsBtn}>+</button>
   </div>);
 }
 function Header({title,onBack}){
@@ -247,7 +251,7 @@ function Header({title,onBack}){
 }
 
 /* ═══ DROPDOWNS ═══ */
-function ExDD({value,onChange,lib,onCustom,favs,toggleFav,cxs,onPickCx}){
+function ExDD({value,onChange,lib,onCustom,favs,toggleFav,cxs,onPickCx,onDelCx}){
   const[open,setOpen]=useState(false);const[f,setF]=useState("");const ref=useRef(null);
   useEffect(()=>{const h=e=>{if(ref.current&&!ref.current.contains(e.target))setOpen(false)};document.addEventListener("mousedown",h);return()=>document.removeEventListener("mousedown",h)},[]);
   const filtered=lib.filter(e=>e.toLowerCase().includes(f.toLowerCase()));
@@ -265,9 +269,10 @@ function ExDD({value,onChange,lib,onCustom,favs,toggleFav,cxs,onPickCx}){
         <div style={{maxHeight:250,overflowY:"auto"}}>
           {fCx.length>0&&(<>
             <div style={{padding:"8px 14px",fontSize:10,letterSpacing:2,color:"#555",textTransform:"uppercase",background:"#151515"}}>📦 My Complexes</div>
-            {fCx.map(cx=>(<div key={cx.id} style={{...S.ddItem,display:"flex",justifyContent:"space-between"}} onMouseDown={()=>{onPickCx(cx);setF("");setOpen(false)}}>
-              <span style={{color:"#eab308",flex:1}}>{cx.name}</span>
-              <span style={{fontSize:11,color:"#555"}}>{cx.movements.length} moves</span>
+            {fCx.map(cx=>(<div key={cx.id} style={{...S.ddItem,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span style={{color:"#eab308",flex:1,cursor:"pointer"}} onMouseDown={()=>{onPickCx(cx);setF("");setOpen(false)}}>{cx.name}</span>
+              <span style={{fontSize:11,color:"#555",marginRight:8}}>{cx.movements.length} moves</span>
+              <span onClick={e=>{e.stopPropagation();onDelCx(cx.name)}} style={{cursor:"pointer",fontSize:12,color:"#ef4444",opacity:0.5,padding:"0 4px"}}>✕</span>
             </div>))}
             <div style={{height:1,background:"#333",margin:"2px 0"}}/>
           </>)}
@@ -461,7 +466,7 @@ function FreestyleLogModal({rounds,onSave,onSkip,lib}){
   </div></div>);
 }
 function MenuOverlay({onNav,onClose}){
-  const items=[{k:"logs",i:"📋",l:"Logs"},{k:"stats",i:"📊",l:"Stats"},{k:"settings",i:"⚙️",l:"Settings"},{k:"readme",i:"📖",l:"Read Me"},{k:"about",i:"ℹ️",l:"About"}];
+  const items=[{k:"logs",i:"📋",l:"Logs"},{k:"stats",i:"📊",l:"Stats"},{k:"cxbuilder",i:"📦",l:"Complex Builder"},{k:"settings",i:"⚙️",l:"Settings"},{k:"readme",i:"📖",l:"Read Me"},{k:"about",i:"ℹ️",l:"About"}];
   return(<div style={S.overlay} onClick={onClose}><div style={S.modal} onClick={e=>e.stopPropagation()}>
     <h3 style={S.modalTitle}>Menu</h3>
     {items.map(it=>(<button key={it.k} onClick={()=>onNav(it.k)} style={S.menuItem}><span style={{fontSize:18}}>{it.i}</span><span>{it.l}</span></button>))}
@@ -490,7 +495,7 @@ function LogsScreen({logs,del,onBack}){
               {isP&&<span style={{fontSize:10,color:"#eab308",fontWeight:700,background:"rgba(234,179,8,0.15)",padding:"2px 6px",borderRadius:4}}>🏆 PR</span>}
               {log.rpe&&<span style={{fontSize:10,color:rpeCol(log.rpe),fontWeight:700,background:`${rpeCol(log.rpe)}22`,padding:"2px 6px",borderRadius:4}}>RPE {log.rpe}</span>}
             </span>
-            <span style={{display:"block",fontSize:12,color:"#737373",marginTop:4}}>{pl(log.completedRounds,"round")} · {log.totalVolume.toLocaleString()}kg · {fmtEl(log.elapsed)}</span>
+            <span style={{display:"block",fontSize:12,color:"#737373",marginTop:4}}>{pl(log.completedRounds,"round")} · {log.totalVolume.toLocaleString()}kg · {fmtEl(log.elapsed)}{log.wallElapsed&&log.wallElapsed!==log.elapsed?` (${fmtEl(log.wallElapsed)} total)`:""}</span>
           </div>
           <div style={{display:"flex",gap:6}}><button onClick={()=>setExp(isO?null:log.id)} style={{...S.microBtn,fontSize:10}}>{isO?"▲":"▼"}</button>
             <button onClick={()=>setCd(log.id)} style={{...S.microBtn,color:"#ef4444"}}>✕</button></div>
@@ -540,8 +545,8 @@ function StatsScreen({logs,reset,onBack}){
     {cr&&<Confirm title="Reset All Data?" message="This will permanently delete ALL workout logs and stats." confirmText="Reset Everything" onConfirm={()=>{reset();setCr(false)}} onCancel={()=>setCr(false)}/>}
   </div>);
 }
-function SettingsScreen({accent,setAccent,sndIdx,setSndIdx,onBack}){
-  const sw=useSwipe(onBack);
+function SettingsScreen({accent,setAccent,sndIdx,setSndIdx,cdSecs,setCdSecs,restoreDefaults,onBack}){
+  const sw=useSwipe(onBack);const[showRestore,setShowRestore]=useState(false);
   return(<div ref={sw} style={S.page}>
     <Header title="Settings" onBack={onBack}/>
     <div style={{marginBottom:32}}>
@@ -552,7 +557,13 @@ function SettingsScreen({accent,setAccent,sndIdx,setSndIdx,onBack}){
         </button>))}
       </div>
     </div>
-    <div>
+    <div style={{marginBottom:32}}>
+      <div style={{fontSize:11,letterSpacing:3,color:"#555",textTransform:"uppercase",marginBottom:14}}>Start Countdown</div>
+      <div style={{display:"flex",gap:8}}>
+        {[3,5,10,15].map(s=>(<button key={s} onClick={()=>setCdSecs(s)} style={{flex:1,padding:10,border:"none",borderRadius:8,fontSize:14,fontWeight:cdSecs===s?700:400,cursor:"pointer",fontFamily:"inherit",background:cdSecs===s?accent:"#1a1a1a",color:cdSecs===s?"#0a0a0a":"#737373"}}>{s}s</button>))}
+      </div>
+    </div>
+    <div style={{marginBottom:32}}>
       <div style={{fontSize:11,letterSpacing:3,color:"#555",textTransform:"uppercase",marginBottom:14}}>Countdown Sound</div>
       {SOUNDS.map((s,i)=>(<div key={s.name} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 0",borderBottom:i<SOUNDS.length-1?"1px solid #1a1a1a":"none"}}>
         <button onClick={()=>{setSndIdx(i);store.set(STORE_SOUND,i)}} style={{width:22,height:22,borderRadius:"50%",border:`2px solid ${sndIdx===i?accent:"#555"}`,background:sndIdx===i?accent:"transparent",cursor:"pointer",flexShrink:0}}/>
@@ -560,6 +571,8 @@ function SettingsScreen({accent,setAccent,sndIdx,setSndIdx,onBack}){
         <button onClick={()=>demoSnd(s)} style={{background:"none",border:"1px solid #333",borderRadius:6,color:"#a3a3a3",fontSize:11,padding:"5px 12px",cursor:"pointer",fontFamily:"inherit"}}>▶ Demo</button>
       </div>))}
     </div>
+    <div style={{marginTop:20,textAlign:"center"}}><button onClick={()=>setShowRestore(true)} style={{background:"none",border:"none",color:"#444",fontSize:12,cursor:"pointer",letterSpacing:1}}>Restore Default Complexes</button></div>
+    {showRestore&&<Confirm title="Restore Defaults?" message="This will restore all default complexes that were deleted." confirmText="Restore" confirmColor={accent} onConfirm={()=>{restoreDefaults();setShowRestore(false)}} onCancel={()=>setShowRestore(false)}/>}
   </div>);
 }
 function ReadMeScreen({onBack}){
@@ -569,7 +582,7 @@ function ReadMeScreen({onBack}){
     <div style={{color:"#a3a3a3",fontSize:14,lineHeight:2}}>
       <p style={{fontWeight:700,color:"#eab308",marginBottom:12}}>How to use the CS Kettlebell EMOM Timer</p>
       <p><b style={{color:"#d4d4d4"}}>Build your workout.</b> Select an exercise, set reps and weight, and tap + to add. Repeat for each round.</p>
-      <p style={{marginTop:12}}><b style={{color:"#d4d4d4"}}>Complexes.</b> Tap "Add Complex" to create a multi-movement round. Name it, add 2-5 movements with reps, and set a shared weight. Saved complexes appear in the dropdown for reuse.</p>
+      <p style={{marginTop:12}}><b style={{color:"#d4d4d4"}}>Complexes.</b> Open the menu and tap "Complex Builder" to create a multi-movement round. Name it, add 2-5 movements with reps, and set a shared weight. Saved complexes appear in the dropdown for reuse.</p>
       <p style={{marginTop:12}}><b style={{color:"#d4d4d4"}}>Freestyle.</b> Pick a duration and just go. Log exercises after if you want them in your stats.</p>
       <p style={{marginTop:12}}><b style={{color:"#d4d4d4"}}>During the workout.</b> Use ⟨ ⟩ to skip or go back. Double-tap the ring to pause. Timer keeps running even if your screen locks.</p>
       <p style={{marginTop:12}}><b style={{color:"#d4d4d4"}}>After the workout.</b> Rate your RPE, copy your summary, or continue freestyle.</p>
@@ -594,24 +607,26 @@ function AboutScreen({onBack}){
 }
 
 /* ═══ WORKOUT BUILDER ═══ */
-function Builder({exercises,setExercises,sets,setSets,onStart,onFreestyle,lib,addEx,wk,saveWk,delWk,wkName,setWkName,onNav,favs,toggleFav,cxs,saveCx,logs,accent}){
+function Builder({exercises,setExercises,sets,setSets,onStart,onFreestyle,lib,addEx,wk,saveWk,delWk,wkName,setWkName,onNav,favs,toggleFav,cxs,saveCx,delCx,logs,accent}){
   const[sel,setSel]=useState("");const[reps,setReps]=useState(DEF_REPS);const[weight,setWeight]=useState(DEF_WEIGHT);
   const[showSave,setShowSave]=useState(false);const[showLoad,setShowLoad]=useState(false);const[editIdx,setEditIdx]=useState(null);
-  const[showMenu,setShowMenu]=useState(false);const[showCxB,setShowCxB]=useState(false);
+  const[showMenu,setShowMenu]=useState(false);const[showCxB,setShowCxB]=useState(false);const[cxBMode,setCxBMode]=useState("add");
   const[editCxQ,setEditCxQ]=useState(null);const[editCxF,setEditCxF]=useState(null);
-  const[showFS,setShowFS]=useState(false);
+  const[showFS,setShowFS]=useState(false);const[confirmDelCx,setConfirmDelCx]=useState(null);
   const[dismissed,setDismissed]=useState(()=>store.get(STORE_DISMISS)||false);
   const showInstall=!isStandalone()&&!dismissed;
   const streak=calcStreak(logs);
 
   const handleAdd=()=>{if(!sel)return;setExercises(p=>[...p,{id:Date.now(),name:sel,reps,weight}]);setSel("")};
   const pickCx=cx=>setExercises(p=>[...p,{id:Date.now(),name:cx.name,movements:cx.movements.map(m=>({...m})),weight:cx.weight}]);
-  const saveCxNew=data=>{setExercises(p=>[...p,{id:Date.now(),name:data.name,movements:data.movements,weight:data.weight}]);saveCx(data);setShowCxB(false)};
+  const saveCxNew=data=>{if(cxBMode==="add")setExercises(p=>[...p,{id:Date.now(),name:data.name,movements:data.movements,weight:data.weight}]);saveCx(data);setShowCxB(false)};
   const cxQSave=(idx,u)=>{setExercises(p=>p.map((e,i)=>i===idx?{...e,...u}:e));setEditCxQ(null)};
   const cxFSave=(idx,d)=>{setExercises(p=>p.map((e,i)=>i===idx?{...e,name:d.name,weight:d.weight,movements:d.movements}:e));saveCx(d);setEditCxF(null)};
   const remove=id=>setExercises(p=>p.filter(e=>e.id!==id));
   const move=(i,d)=>setExercises(p=>{const n=[...p];const j=i+d;if(j<0||j>=n.length)return p;[n[i],n[j]]=[n[j],n[i]];return n});
+  const duplicate=i=>setExercises(p=>{const n=[...p];const cl={...p[i],id:Date.now()};if(cl.movements)cl.movements=cl.movements.map(m=>({...m}));n.splice(i+1,0,cl);return n});
   const updEx=(idx,u)=>{setExercises(p=>p.map((e,i)=>i===idx?{...e,...u}:e));setEditIdx(null)};
+  const handleNav=k=>{setShowMenu(false);if(k==="cxbuilder"){setCxBMode("library");setShowCxB(true)}else onNav(k)};
 
   return(
     <div style={S.builder}>
@@ -625,16 +640,13 @@ function Builder({exercises,setExercises,sets,setSets,onStart,onFreestyle,lib,ad
         {streak>0&&<div style={{fontSize:12,color:"#555",marginTop:6}}>🔥 {streak} day streak</div>}
       </div>
       <div style={{marginBottom:12}}>
-        <ExDD value={sel} onChange={setSel} lib={lib} onCustom={addEx} favs={favs} toggleFav={toggleFav} cxs={cxs} onPickCx={pickCx}/>
+        <ExDD value={sel} onChange={setSel} lib={lib} onCustom={addEx} favs={favs} toggleFav={toggleFav} cxs={cxs} onPickCx={pickCx} onDelCx={name=>setConfirmDelCx(name)}/>
         <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:12,marginTop:14}}>
           <ScrollPicker key="rp" value={reps} onChange={setReps} max={20} suffix="reps"/>
           <ScrollPicker key="wp" value={weight} onChange={setWeight} max={99} suffix="kg"/>
           <button onClick={handleAdd} disabled={!sel} style={{...S.addBtn,opacity:sel?1:0.35,background:accent}}>+</button>
         </div>
       </div>
-      <button onClick={()=>setShowCxB(true)} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,width:"100%",padding:10,background:"transparent",border:"1px dashed #333",borderRadius:10,color:"#737373",fontSize:13,fontWeight:600,letterSpacing:1,cursor:"pointer",marginBottom:8,fontFamily:"inherit"}}>
-        <span>📦</span> Add Complex
-      </button>
       {exercises.length>0&&(<div style={{marginBottom:4}}>{exercises.map((ex,i)=>{
         const c=isCx(ex);
         return(<div key={ex.id} style={{...S.exItem,background:c?"rgba(234,179,8,0.03)":"transparent"}}>
@@ -646,7 +658,7 @@ function Builder({exercises,setExercises,sets,setSets,onStart,onFreestyle,lib,ad
                 <span style={{fontSize:9,color:accent,fontWeight:700,background:`${accent}22`,padding:"1px 6px",borderRadius:3}}>COMPLEX</span>
               </span>
               <span style={{fontSize:12,color:"#737373",display:"block",marginTop:2}}>{ex.movements.map(m=>`${m.reps} ${m.name.toLowerCase()}`).join(" → ")}</span>
-              <span style={{fontSize:11,color:"#555"}}>{ex.weight}kg · {exReps(ex)}r · {exVol(ex)}kg vol</span>
+              <span style={{fontSize:11,color:"#555"}}>{exReps(ex)}r · {ex.weight}kg · {exVol(ex)}kg vol</span>
             </>):(<>
               <span style={{fontSize:14,fontWeight:600,display:"block"}}>{ex.name}</span>
               <span style={{fontSize:12,color:"#737373"}}>{ex.reps}r{ex.weight?` · ${ex.weight}kg`:""}{ex.weight?<span style={{color:"#555"}}> · {exVol(ex)}kg vol</span>:null}</span>
@@ -655,6 +667,7 @@ function Builder({exercises,setExercises,sets,setSets,onStart,onFreestyle,lib,ad
           <div style={{display:"flex",gap:4}}>
             <button onClick={()=>move(i,-1)} style={S.microBtn} disabled={i===0}>↑</button>
             <button onClick={()=>move(i,1)} style={S.microBtn} disabled={i===exercises.length-1}>↓</button>
+            <button onClick={()=>duplicate(i)} style={S.microBtn}>⧉</button>
             <button onClick={()=>{c?setEditCxQ(i):setEditIdx(i)}} style={S.microBtn}>✎</button>
             <button onClick={()=>remove(ex.id)} style={{...S.microBtn,color:"#ef4444"}}>✕</button>
           </div>
@@ -683,6 +696,7 @@ function Builder({exercises,setExercises,sets,setSets,onStart,onFreestyle,lib,ad
           <span style={{display:"block",color:"#737373"}}>Android: ⋮ → Add to Home Screen</span>
         </div>
       </div>)}
+      {confirmDelCx&&<Confirm title="Delete Complex?" message="This action cannot be undone." confirmText="Delete" onConfirm={()=>{delCx(confirmDelCx);setConfirmDelCx(null)}} onCancel={()=>setConfirmDelCx(null)}/>}
       {editIdx!==null&&exercises[editIdx]&&!isCx(exercises[editIdx])&&<EditModal exercise={exercises[editIdx]} onSave={u=>updEx(editIdx,u)} onCancel={()=>setEditIdx(null)}/>}
       {editCxQ!==null&&exercises[editCxQ]&&<CxQuickEdit entry={exercises[editCxQ]} onSave={u=>cxQSave(editCxQ,u)} onFull={()=>{setEditCxF(editCxQ);setEditCxQ(null)}} onCancel={()=>setEditCxQ(null)}/>}
       {editCxF!==null&&exercises[editCxF]&&<CxBuilder initial={exercises[editCxF]} onSave={d=>cxFSave(editCxF,d)} onCancel={()=>setEditCxF(null)} lib={lib}/>}
@@ -690,42 +704,46 @@ function Builder({exercises,setExercises,sets,setSets,onStart,onFreestyle,lib,ad
       {showSave&&<SaveModal onSave={n=>{saveWk(n,exercises.map(e=>isCx(e)?{name:e.name,movements:e.movements,weight:e.weight}:{name:e.name,reps:e.reps,weight:e.weight}),sets);setWkName(n);setShowSave(false)}} onCancel={()=>setShowSave(false)}/>}
       {showLoad&&<LoadModal wk={wk} onLoad={w=>{setExercises(w.exercises.map((e,i)=>({...e,id:Date.now()+i})));if(w.sets)setSets(w.sets);setWkName(w.name);setShowLoad(false)}} onDel={delWk} onCancel={()=>setShowLoad(false)}/>}
       {showFS&&<FreestyleSetup onStart={dur=>{setShowFS(false);onFreestyle(dur)}} onCancel={()=>setShowFS(false)}/>}
-      {showMenu&&<MenuOverlay onNav={k=>{setShowMenu(false);onNav(k)}} onClose={()=>setShowMenu(false)}/>}
+      {showMenu&&<MenuOverlay onNav={handleNav} onClose={()=>setShowMenu(false)}/>}
     </div>
   );
 }
 
 /* ═══ COUNTDOWN ═══ */
-function Countdown({onDone,onCancel,muted,sndP,accent}){
-  const[count,setCount]=useState(3);const st=useRef(Date.now());const ac=useRef(null);const beeped=useRef(new Set());const can=useRef(false);
+function Countdown({onDone,onCancel,muted,sndP,accent,cdSecs,acRef}){
+  const[count,setCount]=useState(cdSecs);const st=useRef(Date.now());const beeped=useRef(new Set());const can=useRef(false);
   useEffect(()=>{
-    const iv=setInterval(()=>{if(can.current)return;const el=Math.floor((Date.now()-st.current)/1000);const rem=3-el;
-      if(rem<=0){clearInterval(iv);if(!beeped.current.has(0)){beeped.current.add(0);mkBeep(ac,sndP,"go",muted)}onDone();return}
-      if(!beeped.current.has(rem)){beeped.current.add(rem);mkBeep(ac,sndP,"count",muted);vib(50)}setCount(rem);
+    const iv=setInterval(()=>{if(can.current)return;const el=Math.floor((Date.now()-st.current)/1000);const rem=cdSecs-el;
+      if(rem<=0){clearInterval(iv);if(!beeped.current.has(0)){beeped.current.add(0);mkBeep(acRef,sndP,"go",muted)}onDone();return}
+      if(rem<=3&&!beeped.current.has(rem)){beeped.current.add(rem);mkBeep(acRef,sndP,"count",muted);vib(50)}setCount(rem);
     },100);return()=>clearInterval(iv);
-  },[onDone,sndP]);
+  },[onDone,sndP,cdSecs]);
+  const startNow=()=>{can.current=true;onDone()};
   return(<div style={{...S.timerWrap,justifyContent:"center"}}>
     <div style={{fontSize:120,fontWeight:800,color:accent,fontVariantNumeric:"tabular-nums"}}>{count}</div>
     <div style={{fontSize:14,color:"#555",letterSpacing:4,marginTop:12,textTransform:"uppercase"}}>Get Ready</div>
-    <button onClick={()=>{can.current=true;onCancel()}} style={{marginTop:40,background:"none",border:"1px solid #555",borderRadius:10,color:"#a3a3a3",padding:"10px 32px",fontSize:13,cursor:"pointer",fontFamily:"inherit",letterSpacing:1}}>Cancel</button>
+    <button onClick={startNow} style={{marginTop:30,background:accent,border:"none",borderRadius:10,color:"#0a0a0a",padding:"12px 36px",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"inherit",letterSpacing:1}}>Start Now</button>
+    <button onClick={()=>{can.current=true;onCancel()}} style={{marginTop:12,background:"none",border:"1px solid #555",borderRadius:10,color:"#a3a3a3",padding:"10px 32px",fontSize:13,cursor:"pointer",fontFamily:"inherit",letterSpacing:1}}>Cancel</button>
   </div>);
 }
 
 /* ═══ TIMER ═══ */
 function getRingCol(sec,dyn){if(!dyn)return sec<=10?"#ef4444":"#eab308";if(sec>=40)return"#22c55e";if(sec>=25)return"#eab308";if(sec>=10)return"#f97316";return"#ef4444"}
 
-function Timer({exercises,sets,onFinish,muted,mutedSt,toggleMute,sndP,accent,freeMode,freeRounds}){
+function Timer({exercises,sets,onFinish,muted,mutedSt,toggleMute,sndP,accent,freeMode,freeRounds,acRef}){
   const isFS=!!freeMode;
   const totalR=isFS?(freeRounds||999):exercises.length*sets;
-  const[gR,setGR]=useState(0);const[sec,setSec]=useState(60);const[el,setEl]=useState(0);
+  const[gR,setGR]=useState(0);const[sec,setSec]=useState(60);const[el,setEl]=useState(0);const[wallEl,setWallEl]=useState(0);
   const[paused,setPaused]=useState(false);const[done,setDone]=useState(false);
   const[stoppedE,setStoppedE]=useState(false);const[preview,setPreview]=useState(false);
   const[dynRing,setDynRing]=useState(true);const[confAct,setConfAct]=useState(null);
 
   const rStart=useRef(Date.now());const elBase=useRef(0);const elStart=useRef(Date.now());
-  const beeped=useRef(new Set());const ac=useRef(null);const wl=useRef(null);
+  const wallStart=useRef(Date.now());
+  const beeped=useRef(new Set());const wl=useRef(null);
   const pauseT=useRef(null);const doneR=useRef(false);const stoppedR=useRef(false);
-  const gRR=useRef(0);const elR=useRef(0);
+  const gRR=useRef(0);const elR=useRef(0);const wallR=useRef(0);
+  const intDur=60;
 
   const lastTap=useRef(0);
   const ringTap=()=>{const now=Date.now();if(now-lastTap.current<300){togglePause();lastTap.current=0}else lastTap.current=now};
@@ -741,12 +759,17 @@ function Timer({exercises,sets,onFinish,muted,mutedSt,toggleMute,sndP,accent,fre
   },[]);
 
   useEffect(()=>{
+    const wiv=setInterval(()=>{const w=Math.floor((Date.now()-wallStart.current)/1000);setWallEl(w);wallR.current=w},1000);
+    return()=>clearInterval(wiv);
+  },[]);
+
+  useEffect(()=>{
     if(paused||doneR.current)return;
     const iv=setInterval(()=>{
-      const now=Date.now();const re=Math.floor((now-rStart.current)/1000);const rem=Math.max(0,60-re);setSec(rem);
+      const now=Date.now();const re=Math.floor((now-rStart.current)/1000);const rem=Math.max(0,intDur-re);setSec(rem);
       const e=elBase.current+Math.floor((now-elStart.current)/1000);setEl(e);elR.current=e;
-      for(let s=3;s>=1;s--){if(rem<=s&&!beeped.current.has(s)){beeped.current.add(s);mkBeep(ac,sndP,s===1?"count":"count",muted);vib(s===1?200:100)}}
-      if(rem<=0&&!beeped.current.has(0)){beeped.current.add(0);mkBeep(ac,sndP,"go",muted);vib(300);
+      for(let s=3;s>=1;s--){if(rem<=s&&!beeped.current.has(s)){beeped.current.add(s);mkBeep(acRef,sndP,s===1?"count":"count",muted);vib(s===1?200:100)}}
+      if(rem<=0&&!beeped.current.has(0)){beeped.current.add(0);mkBeep(acRef,sndP,"go",muted);vib(300);
         const nr=gRR.current+1;if(nr>=totalR){doneR.current=true;setDone(true)}
         else{gRR.current=nr;setGR(nr);rStart.current=Date.now();beeped.current.clear()}}
     },150);return()=>clearInterval(iv);
@@ -765,7 +788,7 @@ function Timer({exercises,sets,onFinish,muted,mutedSt,toggleMute,sndP,accent,fre
   useEffect(()=>{if(done){
     const comp=stoppedR.current?gRR.current:totalR;
     const vol=isFS?0:stoppedR.current?volForR(gRR.current):totVol;
-    onFinish({completedRounds:comp,totalRounds:totalR,elapsed:elR.current,totalVolume:vol,partial:stoppedR.current||isFS,freestyle:isFS});
+    onFinish({completedRounds:comp,totalRounds:totalR,elapsed:elR.current,wallElapsed:wallR.current,totalVolume:vol,partial:stoppedR.current||isFS,freestyle:isFS});
   }},[done]);
 
   const prog=sec/60;const ringCol=getRingCol(sec,dynRing);
@@ -799,13 +822,13 @@ function Timer({exercises,sets,onFinish,muted,mutedSt,toggleMute,sndP,accent,fre
 
       <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",width:"100%",maxWidth:320,margin:"0 auto"}}>
         <div style={{textAlign:"center",marginBottom:4}}>
-          {isFS?(<><span style={{display:"block",fontSize:20,fontWeight:700,textTransform:"uppercase",letterSpacing:4,color:accent}}>FREESTYLE</span>
+          {isFS?(<><span style={{display:"block",fontSize:28,fontWeight:700,textTransform:"uppercase",letterSpacing:4,color:accent}}>FREESTYLE</span>
             <span style={{display:"block",fontSize:16,color:"#555",marginTop:2}}>Round {gR+1}</span></>)
-          :isCx(curEx)?(<><span style={{display:"block",fontSize:18,fontWeight:700,textTransform:"uppercase",letterSpacing:2}}>{curEx.name}</span>
-            <span style={{display:"block",fontSize:14,color:accent,marginTop:4,fontWeight:600}}>{curEx.movements.map(m=>`${m.reps} ${m.name.toLowerCase()}`).join(" → ")}</span>
-            <span style={{display:"block",fontSize:14,color:"#555",marginTop:2}}>{curEx.weight}kg</span></>)
-          :(<><span style={{display:"block",fontSize:20,fontWeight:700,textTransform:"uppercase",letterSpacing:2}}>{curEx.name}</span>
-            <span style={{display:"block",fontSize:20,color:accent,marginTop:2,fontWeight:700}}>{curEx.reps} reps{curEx.weight?` · ${curEx.weight}kg`:""}</span></>)}
+          :isCx(curEx)?(<><span style={{display:"block",fontSize:26,fontWeight:700,textTransform:"uppercase",letterSpacing:2}}>{curEx.name}</span>
+            <div style={{marginTop:6}}>{curEx.movements.map((m,mi)=>(<div key={mi} style={{fontSize:18,color:accent,fontWeight:600,lineHeight:1.6}}>{m.reps}x {m.name}</div>))}</div>
+            <span style={{display:"block",fontSize:15,color:"#555",marginTop:4}}>{curEx.weight}kg</span></>)
+          :(<><span style={{display:"block",fontSize:28,fontWeight:700,textTransform:"uppercase",letterSpacing:2}}>{curEx.name}</span>
+            <span style={{display:"block",fontSize:22,color:accent,marginTop:2,fontWeight:700}}>{curEx.reps} reps{curEx.weight?` · ${curEx.weight}kg`:""}</span></>)}
         </div>
         <div onClick={ringTap} style={{position:"relative",width:"100%",aspectRatio:"1",cursor:"pointer"}}>
           <svg viewBox="0 0 200 200" style={{width:"100%",height:"100%"}}>
@@ -833,7 +856,7 @@ function Timer({exercises,sets,onFinish,muted,mutedSt,toggleMute,sndP,accent,fre
           <button onClick={goNext} style={S.skipBtn}>⟩</button>
         </div>
         <div style={{display:"flex",gap:16,justifyContent:"center",fontSize:11,color:"#4a4a4a",fontVariantNumeric:"tabular-nums"}}>
-          <span>{fmtEl(el)} elapsed</span>{!isFS&&<><span>·</span><span>{totVol.toLocaleString()}kg vol</span></>}
+          <span>{fmtEl(el)} active</span><span>·</span><span>{fmtEl(wallEl)} total</span>{!isFS&&<><span>·</span><span>{totVol.toLocaleString()}kg vol</span></>}
         </div>
       </div>
     </div>
@@ -854,8 +877,8 @@ function Complete({data,exercises,sets,wkName,onHome,onFreestyle,logs,accent,onR
     if(!data.freestyle){t+="━━━━━━━━━━━━━━━━━━━━\n";
       exercises.forEach((ex,i)=>{t+=isCx(ex)?`${i+1}. ${ex.name} (${ex.movements.map(m=>`${m.reps} ${m.name.toLowerCase()}`).join(" → ")}) · ${ex.weight}kg\n`:`${i+1}. ${ex.name} — ${ex.reps}r · ${ex.weight}kg\n`});
       if(sets>1)t+=`×${sets} sets\n`;t+="━━━━━━━━━━━━━━━━━━━━\n";
-      t+=`Volume: ${data.totalVolume.toLocaleString()}kg · Time: ${fmtEl(data.elapsed)}`}
-    else t+=`Time: ${fmtEl(data.elapsed)}`;
+      t+=`Volume: ${data.totalVolume.toLocaleString()}kg · Active: ${fmtEl(data.elapsed)} · Total: ${fmtEl(data.wallElapsed||data.elapsed)}`}
+    else t+=`Time: ${fmtEl(data.wallElapsed||data.elapsed)}`;
     if(rpe)t+=`\nRPE: ${rpe}/10`;return t;
   };
   const copySum=async()=>{try{await navigator.clipboard.writeText(genSum());setCopied(true);setTimeout(()=>setCopied(false),2000)}
@@ -871,13 +894,13 @@ function Complete({data,exercises,sets,wkName,onHome,onFreestyle,logs,accent,onR
       <div style={{color:"#a3a3a3",fontSize:14,lineHeight:1.8,marginBottom:16}}>
         <div>{pl(data.completedRounds,"round")}{!data.freestyle?` of ${data.totalRounds}`:""} completed</div>
         {!data.freestyle&&<div>{data.totalVolume.toLocaleString()}kg volume</div>}
-        <div style={{color:"#555",marginTop:4}}>Elapsed: {fmtEl(data.elapsed)}</div>
+        <div style={{color:"#555",marginTop:4}}>Active: {fmtEl(data.elapsed)} · Total: {fmtEl(data.wallElapsed||data.elapsed)}</div>
       </div>
-      {!data.freestyle&&(<div style={{background:"#141414",borderRadius:10,padding:16,width:"100%",maxWidth:360,marginBottom:16}}>
+      {!data.freestyle&&(<div style={{background:"#141414",borderRadius:10,padding:16,width:"100%",maxWidth:360,marginBottom:16,textAlign:"left"}}>
         <div style={{fontSize:10,letterSpacing:3,color:"#555",textTransform:"uppercase",marginBottom:10,textAlign:"center"}}>Workout Summary</div>
-        {exercises.map((ex,i)=>(<div key={i} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:i<exercises.length-1?"1px solid #1f1f1f":"none"}}>
-          {isCx(ex)?<><span style={{fontSize:13,color:"#d4d4d4",flex:1}}>{i+1}. {ex.name}</span><span style={{fontSize:12,color:"#737373"}}>{ex.weight}kg</span></>
-          :<><span style={{fontSize:13,color:"#d4d4d4"}}>{i+1}. {ex.name}</span><span style={{fontSize:12,color:"#737373"}}>{ex.reps}r · {ex.weight}kg</span></>}
+        {exercises.map((ex,i)=>(<div key={i} style={{padding:"6px 0",borderBottom:i<exercises.length-1?"1px solid #1f1f1f":"none"}}>
+          {isCx(ex)?<><div style={{fontSize:13,color:"#d4d4d4",fontWeight:600}}>{i+1}. {ex.name}</div><div style={{fontSize:12,color:"#737373",marginTop:2}}>{exReps(ex)}r · {ex.weight}kg · {exVol(ex)}kg vol</div></>
+          :<div style={{display:"flex",justifyContent:"space-between"}}><span style={{fontSize:13,color:"#d4d4d4"}}>{i+1}. {ex.name}</span><span style={{fontSize:12,color:"#737373"}}>{ex.reps}r · {ex.weight}kg</span></div>}
         </div>))}
         {sets>1&&<div style={{textAlign:"right",fontSize:12,color:accent,marginTop:8}}>×{sets} sets</div>}
       </div>)}
@@ -900,30 +923,34 @@ function EmomApp(){
   const[wkName,setWkName]=useState(null);const[compData,setCompData]=useState(null);
   const[accent,setAccent]=useState(()=>store.get(STORE_ACCENT)||"#eab308");
   const[sndIdx,setSndIdx]=useState(()=>store.get(STORE_SOUND)||0);
+  const[cdSecs,setCdSecs]=useState(()=>store.get(STORE_CD)||5);
   const mutedRef=useRef(store.get(STORE_MUTE)||false);
   const[mutedSt,setMutedSt]=useState(mutedRef.current);
+  const acRef=useRef(null);
   const stRef=useRef(null);const fsRef=useRef(null);const logIdRef=useRef(null);
 
   const{lib,add:addEx}=useExLib();
   const{wk,save:saveWk,del:delWk}=useWorkouts();
   const{logs,add:addLog,del:delLog,upd:updLog,reset:resetLogs}=useLogs();
   const{favs,toggle:toggleFav}=useFavs();
-  const{cxs,save:saveCx}=useCxLib();
+  const{cxs,save:saveCx,del:delCx,restoreDefaults}=useCxLib();
   const sndP=SOUNDS[sndIdx]||SOUNDS[0];
 
+  const initAudio=()=>{if(!acRef.current)try{acRef.current=new(window.AudioContext||window.webkitAudioContext)()}catch{}};
   const toggleMute=()=>{mutedRef.current=!mutedRef.current;setMutedSt(mutedRef.current);store.set(STORE_MUTE,mutedRef.current)};
-  const handleStart=()=>{stRef.current=new Date();fsRef.current=null;setScreen("countdown")};
-  const handleFS=dur=>{stRef.current=new Date();fsRef.current={rounds:dur};setScreen("countdown")};
-  const handlePostFS=()=>{stRef.current=new Date();fsRef.current={rounds:null};setScreen("countdown")};
+  const handleStart=()=>{initAudio();stRef.current=new Date();fsRef.current=null;setScreen("countdown")};
+  const handleFS=dur=>{initAudio();stRef.current=new Date();fsRef.current={rounds:dur};setScreen("countdown")};
+  const handlePostFS=()=>{initAudio();stRef.current=new Date();fsRef.current={rounds:null};setScreen("countdown")};
   const handleCDDone=useCallback(()=>setScreen("timer"),[]);
   const handleCDCancel=useCallback(()=>setScreen("home"),[]);
+  const handleSetCd=v=>{setCdSecs(v);store.set(STORE_CD,v)};
 
   const handleFinish=useCallback(data=>{
     const id=Date.now();logIdRef.current=id;
     addLog({id,startTime:stRef.current.toISOString(),workoutName:data.freestyle?"Freestyle":wkName,
       exercises:data.freestyle?[]:exercises.map(e=>isCx(e)?{name:e.name,movements:e.movements,weight:e.weight}:{name:e.name,reps:e.reps,weight:e.weight}),
       sets:data.freestyle?1:sets,completedRounds:data.completedRounds,totalRounds:data.totalRounds,
-      elapsed:data.elapsed,totalVolume:data.totalVolume,partial:data.partial,freestyle:data.freestyle||false});
+      elapsed:data.elapsed,wallElapsed:data.wallElapsed||data.elapsed,totalVolume:data.totalVolume,partial:data.partial,freestyle:data.freestyle||false});
     setCompData(data);setScreen("complete");
   },[exercises,sets,wkName,addLog]);
 
@@ -936,15 +963,15 @@ function EmomApp(){
 
   const goHome=()=>setScreen("home");
 
-  if(screen==="countdown")return <Countdown onDone={handleCDDone} onCancel={handleCDCancel} muted={mutedRef} sndP={sndP} accent={accent}/>;
-  if(screen==="timer")return <Timer exercises={exercises} sets={sets} onFinish={handleFinish} muted={mutedRef} mutedSt={mutedSt} toggleMute={toggleMute} sndP={sndP} accent={accent} freeMode={!!fsRef.current} freeRounds={fsRef.current?.rounds}/>;
+  if(screen==="countdown")return <Countdown onDone={handleCDDone} onCancel={handleCDCancel} muted={mutedRef} sndP={sndP} accent={accent} cdSecs={cdSecs} acRef={acRef}/>;
+  if(screen==="timer")return <Timer exercises={exercises} sets={sets} onFinish={handleFinish} muted={mutedRef} mutedSt={mutedSt} toggleMute={toggleMute} sndP={sndP} accent={accent} freeMode={!!fsRef.current} freeRounds={fsRef.current?.rounds} acRef={acRef}/>;
   if(screen==="complete")return <Complete data={compData} exercises={exercises} sets={sets} wkName={wkName} onHome={goHome} onFreestyle={handlePostFS} logs={logs} accent={accent} onRPE={handleRPE} lib={lib} onFSLog={handleFSLog}/>;
   if(screen==="logs")return <LogsScreen logs={logs} del={delLog} onBack={goHome}/>;
   if(screen==="stats")return <StatsScreen logs={logs} reset={resetLogs} onBack={goHome}/>;
-  if(screen==="settings")return <SettingsScreen accent={accent} setAccent={setAccent} sndIdx={sndIdx} setSndIdx={setSndIdx} onBack={goHome}/>;
+  if(screen==="settings")return <SettingsScreen accent={accent} setAccent={setAccent} sndIdx={sndIdx} setSndIdx={setSndIdx} cdSecs={cdSecs} setCdSecs={handleSetCd} restoreDefaults={restoreDefaults} onBack={goHome}/>;
   if(screen==="readme")return <ReadMeScreen onBack={goHome}/>;
   if(screen==="about")return <AboutScreen onBack={goHome}/>;
-  return <Builder exercises={exercises} setExercises={setExercises} sets={sets} setSets={setSets} onStart={handleStart} onFreestyle={handleFS} lib={lib} addEx={addEx} wk={wk} saveWk={saveWk} delWk={delWk} wkName={wkName} setWkName={setWkName} onNav={setScreen} favs={favs} toggleFav={toggleFav} cxs={cxs} saveCx={saveCx} logs={logs} accent={accent}/>;
+  return <Builder exercises={exercises} setExercises={setExercises} sets={sets} setSets={setSets} onStart={handleStart} onFreestyle={handleFS} lib={lib} addEx={addEx} wk={wk} saveWk={saveWk} delWk={delWk} wkName={wkName} setWkName={setWkName} onNav={setScreen} favs={favs} toggleFav={toggleFav} cxs={cxs} saveCx={saveCx} delCx={delCx} logs={logs} accent={accent}/>;
 }
 
 /* ═══ STYLES ═══ */
