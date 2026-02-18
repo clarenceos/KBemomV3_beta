@@ -67,6 +67,9 @@ const isStandalone=()=>{try{return window.matchMedia("(display-mode: standalone)
 
 /* ═══ AUDIO ═══ */
 function mkBeep(acRef,p,type,muted){
+  // iOS PWA: after returning from background, WebAudio often requires a fresh user gesture.
+  // If we try to beep before any gesture, iOS will block it; skip instead.
+  if(typeof window!=="undefined" && window.__CS_AUDIO_NEEDS_GESTURE) return;
   if(muted&&muted.current)return;
   if(!acRef||!acRef.current)return;
   try{
@@ -637,7 +640,7 @@ function Builder({exercises,setExercises,sets,setSets,onStart,onFreestyle,lib,ad
         <div style={{fontSize:36,marginBottom:8}}>⏱</div>
         <h1 style={S.titleMain}>CS Kettlebell</h1>
         <h1 style={{...S.titleSub,color:accent}}>EMOM Timer</h1>
-        <div style={{fontSize:12,color:"#555",marginTop:-6,marginBottom:10}}>v3.2.4</div>
+        <div style={{fontSize:12,color:"#555",marginTop:-6,marginBottom:10}}>v3.2.5</div>
         {streak>0&&<div style={{fontSize:12,color:"#555",marginTop:6}}>🔥 {streak} day streak</div>}
       </div>
       <div style={{marginBottom:12}}>
@@ -982,6 +985,10 @@ function EmomApp(){
   // v3.2.1: iOS PWA lifecycle guardrails (audio + wake lock)
   const wlRef=useRef(null);
   const wlWanted=useRef(false);
+
+  // Global flag used by mkBeep to avoid attempting audio immediately after returning from background.
+  useEffect(()=>{window.__CS_AUDIO_NEEDS_GESTURE=false;},[]);
+
   const acquireWake=useCallback(async()=>{
     wlWanted.current=true;
     if(!("wakeLock" in navigator) || !navigator.wakeLock || !navigator.wakeLock.request) return;
@@ -1000,14 +1007,21 @@ function EmomApp(){
   },[]);
   useEffect(()=>{
     const onVis=()=>{
-      if(document.visibilityState==="hidden") audioDirtyRef.current=true;
-      if(document.visibilityState==="visible" && wlWanted.current) acquireWake();
+      if(document.visibilityState==="hidden"){
+        audioDirtyRef.current=true;
+        // Returning later will require a user gesture to re-enable audio on iOS.
+        window.__CS_AUDIO_NEEDS_GESTURE=true;
+      }
+      if(document.visibilityState==="visible"){
+        window.__CS_AUDIO_NEEDS_GESTURE=true;
+        if(wlWanted.current) acquireWake();
+      }
     };
     document.addEventListener("visibilitychange",onVis);
     return()=>document.removeEventListener("visibilitychange",onVis);
   },[acquireWake]);
   useEffect(()=>{
-    const onPH=()=>{audioDirtyRef.current=true;};
+    const onPH=()=>{audioDirtyRef.current=true;window.__CS_AUDIO_NEEDS_GESTURE=true;};
     window.addEventListener("pagehide",onPH);
     return()=>window.removeEventListener("pagehide",onPH);
   },[]);
@@ -1042,7 +1056,9 @@ function EmomApp(){
   };
   const onUserGesture=()=>{
     // Called from user taps within Timer/Countdown to re-arm audio + wake lock after iOS lock/background
-    initAudio(); if(screen==="countdown"||screen==="timer") acquireWake();
+    window.__CS_AUDIO_NEEDS_GESTURE=false;
+    initAudio();
+    if(screen==="countdown"||screen==="timer") acquireWake();
   };
   const toggleMute=()=>{initAudio();mutedRef.current=!mutedRef.current;setMutedSt(mutedRef.current);store.set(STORE_MUTE,mutedRef.current)};
   const handleStart=()=>{initAudio();acquireWake();stRef.current=new Date();fsRef.current=null;setScreen("countdown")};
