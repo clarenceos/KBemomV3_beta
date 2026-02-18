@@ -637,6 +637,7 @@ function Builder({exercises,setExercises,sets,setSets,onStart,onFreestyle,lib,ad
         <div style={{fontSize:36,marginBottom:8}}>⏱</div>
         <h1 style={S.titleMain}>CS Kettlebell</h1>
         <h1 style={{...S.titleSub,color:accent}}>EMOM Timer</h1>
+        <div style={{fontSize:12,color:"#555",marginTop:-6,marginBottom:10}}>v3.2.2</div>
         {streak>0&&<div style={{fontSize:12,color:"#555",marginTop:6}}>🔥 {streak} day streak</div>}
       </div>
       <div style={{marginBottom:12}}>
@@ -761,36 +762,65 @@ function Timer({exercises,sets,onFinish,muted,mutedSt,toggleMute,sndP,accent,fre
   useEffect(()=>{
     if(paused||doneR.current)return;
     const iv=setInterval(()=>{
-      const now=Date.now();const re=Math.floor((now-rStart.current)/1000);const rem=Math.max(0,intDur-re);setSec(rem);
-      const e=elBase.current+Math.floor((now-elStart.current)/1000);setEl(e);elR.current=e;
-      // Beep thresholds: fire only on 1-second boundary crossings to avoid catch-up bursts after background/lock
-      if(lastRem.current==null) lastRem.current=rem;
-      const jump = lastRem.current - rem;
-      if(jump===1){
-        if(rem===3||rem===2||rem===1){
-          if(!beeped.current.has(rem)){beeped.current.add(rem);mkBeep(acRef,sndP,"count",muted);vib(rem===1?200:100)}
-        }
-        if(rem===0&&!beeped.current.has(0)){
-          beeped.current.add(0);mkBeep(acRef,sndP,"go",muted);vib(300);
-          const nr=gRR.current+1;if(nr>=totalR){doneR.current=true;setDone(true)}
-          else{gRR.current=nr;setGR(nr);rStart.current=Date.now();beeped.current.clear();lastRem.current=intDur;lastRem.current=intDur}
-        }
-      }else if(jump>1){
-        // Large jump (iOS background/lock): do not replay missed beeps
+      const now=Date.now();
+      // --- Wall-clock round catch-up (iOS lock/background safe) ---
+      let re=Math.floor((now-rStart.current)/1000);
+      if(re<0) re=0;
+      const adv=Math.floor(re/intDur);
+      const mod=re%intDur;
+      let rem=intDur-mod;
+      if(rem===0) rem=intDur; // exact boundary -> start of next round at full duration
+      if(adv>0){
+        const nr=gRR.current+adv;
+        if(nr>=totalR){doneR.current=true;setDone(true);return;}
+        gRR.current=nr; setGR(nr);
+        rStart.current += adv*intDur*1000;
         beeped.current.clear();
+        lastRem.current=rem;
+        setSec(rem);
+        // do not replay missed beeps on catch-up
+        return;
+      }
+      setSec(rem);
+
+      const e=elBase.current+Math.floor((now-elStart.current)/1000);setEl(e);elR.current=e;
+
+      // Beep thresholds: only on 1-second boundary crossings (no catch-up bursts)
+      if(lastRem.current==null) lastRem.current=rem;
+      const prev=lastRem.current;
+      if(prev-rem===1){
+        if(rem===3||rem===2||rem===1){
+          if(!beeped.current.has(rem)){
+            beeped.current.add(rem);
+            mkBeep(acRef,sndP,"count",muted);
+            vib(rem===1?200:100);
+          }
+        }
+        if(rem===intDur && prev===1 && !beeped.current.has(0)){
+          // optional: if we were at 1 then rolled, treat as GO (kept minimal)
+          beeped.current.add(0);
+          mkBeep(acRef,sndP,"go",muted);
+          vib(300);
+          const nr=gRR.current+1;
+          if(nr>=totalR){doneR.current=true;setDone(true)}
+          else{gRR.current=nr;setGR(nr);rStart.current=Date.now();beeped.current.clear();lastRem.current=intDur;setSec(intDur)}
+        }
       }
       lastRem.current=rem;
-      if(rem<=0&&jump>1){
-        // still advance round if we jumped past end, without replaying beeps
-        const nr=gRR.current+1;if(nr>=totalR){doneR.current=true;setDone(true)}
-        else{gRR.current=nr;setGR(nr);rStart.current=Date.now();beeped.current.clear();lastRem.current=intDur;lastRem.current=intDur}
+
+      // Standard rollover when rem hits 0 not used anymore since rem becomes intDur on boundary,
+      // but keep safety: if now has passed boundary due to scheduling jitter
+      if(mod===0 && re>0 && prev!==intDur){
+        const nr=gRR.current+1;
+        if(nr>=totalR){doneR.current=true;setDone(true)}
+        else{gRR.current=nr;setGR(nr);rStart.current=Date.now();beeped.current.clear();lastRem.current=intDur;setSec(intDur)}
       }
     },150);return()=>clearInterval(iv);
   },[paused,totalR,sndP]);
 
   const togglePause=()=>{if(paused){const d=Date.now()-pauseT.current;rStart.current+=d;elStart.current+=d;setPaused(false)}else{pauseT.current=Date.now();setPaused(true)}};
-  const goNext=()=>{onUserGesture&&onUserGesture();const n=gRR.current+1;if(n>=totalR){doneR.current=true;setDone(true);return}gRR.current=n;setGR(n);rStart.current=Date.now();beeped.current.clear();lastRem.current=intDur;setSec(60)};
-  const goPrev=()=>{onUserGesture&&onUserGesture();if(gRR.current<=0)return;gRR.current-=1;setGR(gRR.current);rStart.current=Date.now();beeped.current.clear();lastRem.current=intDur;setSec(60)};
+  const goNext=()=>{onUserGesture&&onUserGesture();const n=gRR.current+1;if(n>=totalR){doneR.current=true;setDone(true);return}gRR.current=n;setGR(n);rStart.current=Date.now();beeped.current.clear();lastRem.current=intDur;setSec(intDur)};
+  const goPrev=()=>{onUserGesture&&onUserGesture();if(gRR.current<=0)return;gRR.current-=1;setGR(gRR.current);rStart.current=Date.now();beeped.current.clear();lastRem.current=intDur;setSec(intDur)};
   const trigStop=t=>{if(!paused){pauseT.current=Date.now();setPaused(true)}setConfAct(t)};
   const cancelConf=()=>{setConfAct(null);if(pauseT.current){const d=Date.now()-pauseT.current;rStart.current+=d;elStart.current+=d}setPaused(false)};
   const confStop=()=>{setConfAct(null);stoppedR.current=true;setStoppedE(true);doneR.current=true;setDone(true)};
@@ -804,7 +834,7 @@ function Timer({exercises,sets,onFinish,muted,mutedSt,toggleMute,sndP,accent,fre
     onFinish({completedRounds:comp,totalRounds:totalR,elapsed:elR.current,wallElapsed:wallR.current,totalVolume:vol,partial:stoppedR.current||isFS,freestyle:isFS});
   }},[done]);
 
-  const prog=sec/60;const ringCol=getRingCol(sec,dynRing);
+  const prog=sec/intDur;const ringCol=getRingCol(sec,dynRing);
 
   return(
     <div style={S.timerWrap} onPointerDown={onUserGesture} onTouchStart={onUserGesture}>
@@ -877,7 +907,7 @@ function Timer({exercises,sets,onFinish,muted,mutedSt,toggleMute,sndP,accent,fre
 }
 
 /* ═══ COMPLETION ═══ */
-function Complete({data,exercises,sets,wkName,onHome,onFreestyle,logs,accent,onRPE,lib,onFSLog}){
+function Complete({data,exercises,sets,wkName,onHome,onFreestyle,logs,accent,onRPE,lib,onFSLog,onUserGesture}){
   const[copied,setCopied]=useState(false);const[rpe,setRpe]=useState(null);const[showFSLog,setShowFSLog]=useState(false);
   const d=new Date();
   const prevPR=logs.length>1?getPR(logs.slice(1)):0;
@@ -1012,7 +1042,7 @@ const handleCDDone=useCallback(()=>setScreen("timer"),[]);
 
   if(screen==="countdown")return <Countdown onDone={handleCDDone} onCancel={handleCDCancel} muted={mutedRef} sndP={sndP} accent={accent} cdSecs={cdSecs} acRef={acRef} onUserGesture={onUserGesture}/>;
   if(screen==="timer")return <Timer exercises={exercises} sets={sets} onFinish={handleFinish} muted={mutedRef} mutedSt={mutedSt} toggleMute={toggleMute} sndP={sndP} accent={accent} freeMode={!!fsRef.current} freeRounds={fsRef.current?.rounds} acRef={acRef} onUserGesture={onUserGesture}/>;
-  if(screen==="complete")return <Complete data={compData} exercises={exercises} sets={sets} wkName={wkName} onHome={goHome} onFreestyle={handlePostFS} logs={logs} accent={accent} onRPE={handleRPE} lib={lib} onFSLog={handleFSLog}/>;
+  if(screen==="complete")return <Complete data={compData} exercises={exercises} sets={sets} wkName={wkName} onHome={goHome} onFreestyle={handlePostFS} logs={logs} accent={accent} onRPE={handleRPE} lib={lib} onFSLog={handleFSLog} onUserGesture={onUserGesture}/>;
   if(screen==="logs")return <LogsScreen logs={logs} del={delLog} onBack={goHome}/>;
   if(screen==="stats")return <StatsScreen logs={logs} reset={resetLogs} onBack={goHome}/>;
   if(screen==="settings")return <SettingsScreen accent={accent} setAccent={setAccent} sndIdx={sndIdx} setSndIdx={setSndIdx} cdSecs={cdSecs} setCdSecs={handleSetCd} restoreDefaults={restoreDefaults} onBack={goHome}/>;
