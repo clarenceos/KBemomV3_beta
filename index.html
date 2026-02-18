@@ -637,7 +637,7 @@ function Builder({exercises,setExercises,sets,setSets,onStart,onFreestyle,lib,ad
         <div style={{fontSize:36,marginBottom:8}}>⏱</div>
         <h1 style={S.titleMain}>CS Kettlebell</h1>
         <h1 style={{...S.titleSub,color:accent}}>EMOM Timer</h1>
-        <div style={{fontSize:12,color:"#555",marginTop:-6,marginBottom:10}}>v3.2.3</div>
+        <div style={{fontSize:12,color:"#555",marginTop:-6,marginBottom:10}}>v3.2.4</div>
         {streak>0&&<div style={{fontSize:12,color:"#555",marginTop:6}}>🔥 {streak} day streak</div>}
       </div>
       <div style={{marginBottom:12}}>
@@ -968,6 +968,8 @@ function EmomApp(){
   const mutedRef=useRef(store.get(STORE_MUTE)||false);
   const[mutedSt,setMutedSt]=useState(mutedRef.current);
   const acRef=useRef(null);
+  const audioDirtyRef=useRef(false);
+
   const stRef=useRef(null);const fsRef=useRef(null);const logIdRef=useRef(null);
 
   const{lib,add:addEx}=useExLib();
@@ -997,21 +999,44 @@ function EmomApp(){
     wlRef.current=null;
   },[]);
   useEffect(()=>{
-    const onVis=()=>{if(document.visibilityState==="visible" && wlWanted.current) acquireWake()};
+    const onVis=()=>{
+      if(document.visibilityState==="hidden") audioDirtyRef.current=true;
+      if(document.visibilityState==="visible" && wlWanted.current) acquireWake();
+    };
     document.addEventListener("visibilitychange",onVis);
     return()=>document.removeEventListener("visibilitychange",onVis);
   },[acquireWake]);
+  useEffect(()=>{
+    const onPH=()=>{audioDirtyRef.current=true;};
+    window.addEventListener("pagehide",onPH);
+    return()=>window.removeEventListener("pagehide",onPH);
+  },[]);
+
   useEffect(()=>{if(screen!=="countdown"&&screen!=="timer")releaseWake()},[screen,releaseWake]);
 
   const initAudio=()=>{
     try{
       const Ctx=(window.AudioContext||window.webkitAudioContext);
       if(!Ctx) return;
+
+      // iOS PWA: after background/app-switch, audio can become unrecoverable even if state looks "running".
+      // Mark audioDirtyRef on visibility/pagehide; on next user gesture, force a fresh context.
+      if(audioDirtyRef.current){
+        try{acRef.current&&acRef.current.close&&acRef.current.close().catch(()=>{});}catch{}
+        acRef.current=null;
+        audioDirtyRef.current=false;
+      }
+
       if(!acRef.current || acRef.current.state==="closed"){
         acRef.current=new Ctx();
       }
+
+      // Try to resume; if resume fails, mark dirty so the next gesture forces a rebuild.
       if(acRef.current && acRef.current.state==="suspended" && acRef.current.resume){
-        acRef.current.resume().catch(()=>{});
+        acRef.current.resume().catch(()=>{audioDirtyRef.current=true;});
+      }else if(acRef.current && acRef.current.state==="running" && acRef.current.resume){
+        // Some iOS states claim running but still need a nudge; harmless on others.
+        acRef.current.resume().catch(()=>{audioDirtyRef.current=true;});
       }
     }catch{}
   };
