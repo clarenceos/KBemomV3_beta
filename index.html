@@ -710,7 +710,7 @@ function Builder({exercises,setExercises,sets,setSets,onStart,onFreestyle,lib,ad
 }
 
 /* ═══ COUNTDOWN ═══ */
-function Countdown({onDone,onCancel,muted,sndP,accent,cdSecs,acRef}){
+function Countdown({onDone,onCancel,muted,sndP,accent,cdSecs,acRef,onUserGesture}){
   const[count,setCount]=useState(cdSecs);const st=useRef(Date.now());const beeped=useRef(new Set());const can=useRef(false);
   useEffect(()=>{
     const iv=setInterval(()=>{if(can.current)return;const el=Math.floor((Date.now()-st.current)/1000);const rem=cdSecs-el;
@@ -718,8 +718,8 @@ function Countdown({onDone,onCancel,muted,sndP,accent,cdSecs,acRef}){
       if(rem<=3&&!beeped.current.has(rem)){beeped.current.add(rem);mkBeep(acRef,sndP,"count",muted);vib(50)}setCount(rem);
     },100);return()=>clearInterval(iv);
   },[onDone,sndP,cdSecs]);
-  const startNow=()=>{can.current=true;onDone()};
-  return(<div style={{...S.timerWrap,justifyContent:"center"}}>
+  const startNow=()=>{onUserGesture&&onUserGesture();can.current=true;onDone()};
+  return(<div style={{...S.timerWrap,justifyContent:"center"}} onPointerDown={onUserGesture} onTouchStart={onUserGesture}>
     <div style={{fontSize:120,fontWeight:800,color:accent,fontVariantNumeric:"tabular-nums"}}>{count}</div>
     <div style={{fontSize:14,color:"#555",letterSpacing:4,marginTop:12,textTransform:"uppercase"}}>Get Ready</div>
     <button onClick={startNow} style={{marginTop:30,background:accent,border:"none",borderRadius:10,color:"#0a0a0a",padding:"12px 36px",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"inherit",letterSpacing:1}}>Start Now</button>
@@ -730,7 +730,7 @@ function Countdown({onDone,onCancel,muted,sndP,accent,cdSecs,acRef}){
 /* ═══ TIMER ═══ */
 function getRingCol(sec,dyn){if(!dyn)return sec<=10?"#ef4444":"#eab308";if(sec>=40)return"#22c55e";if(sec>=25)return"#eab308";if(sec>=10)return"#f97316";return"#ef4444"}
 
-function Timer({exercises,sets,onFinish,muted,mutedSt,toggleMute,sndP,accent,freeMode,freeRounds,acRef}){
+function Timer({exercises,sets,onFinish,muted,mutedSt,toggleMute,sndP,accent,freeMode,freeRounds,acRef,onUserGesture}){
   const isFS=!!freeMode;
   const totalR=isFS?(freeRounds||999):exercises.length*sets;
   const[gR,setGR]=useState(0);const[sec,setSec]=useState(60);const[el,setEl]=useState(0);const[wallEl,setWallEl]=useState(0);
@@ -740,23 +740,18 @@ function Timer({exercises,sets,onFinish,muted,mutedSt,toggleMute,sndP,accent,fre
 
   const rStart=useRef(Date.now());const elBase=useRef(0);const elStart=useRef(Date.now());
   const wallStart=useRef(Date.now());
-  const beeped=useRef(new Set());const wl=useRef(null);
+  const beeped=useRef(new Set());const lastRem=useRef(null);
   const pauseT=useRef(null);const doneR=useRef(false);const stoppedR=useRef(false);
   const gRR=useRef(0);const elR=useRef(0);const wallR=useRef(0);
   const intDur=60;
 
   const lastTap=useRef(0);
-  const ringTap=()=>{const now=Date.now();if(now-lastTap.current<300){togglePause();lastTap.current=0}else lastTap.current=now};
+  const ringTap=()=>{onUserGesture&&onUserGesture();const now=Date.now();if(now-lastTap.current<300){togglePause();lastTap.current=0}else lastTap.current=now};
 
   const curEx=isFS?null:exercises[gR%exercises.length];
   const curSet=isFS?1:Math.floor(gR/exercises.length)+1;
   const curRound=isFS?gR+1:(gR%exercises.length)+1;
   const nextEx=isFS?null:(gR+1<totalR?exercises[(gR+1)%exercises.length]:null);
-
-  useEffect(()=>{const req=async()=>{try{wl.current=await navigator.wakeLock.request("screen")}catch{}};req();
-    const onV=()=>{if(document.visibilityState==="visible")req()};document.addEventListener("visibilitychange",onV);
-    return()=>{if(wl.current)wl.current.release().catch(()=>{});document.removeEventListener("visibilitychange",onV)};
-  },[]);
 
   useEffect(()=>{
     const wiv=setInterval(()=>{const w=Math.floor((Date.now()-wallStart.current)/1000);setWallEl(w);wallR.current=w},1000);
@@ -768,16 +763,34 @@ function Timer({exercises,sets,onFinish,muted,mutedSt,toggleMute,sndP,accent,fre
     const iv=setInterval(()=>{
       const now=Date.now();const re=Math.floor((now-rStart.current)/1000);const rem=Math.max(0,intDur-re);setSec(rem);
       const e=elBase.current+Math.floor((now-elStart.current)/1000);setEl(e);elR.current=e;
-      for(let s=3;s>=1;s--){if(rem<=s&&!beeped.current.has(s)){beeped.current.add(s);mkBeep(acRef,sndP,s===1?"count":"count",muted);vib(s===1?200:100)}}
-      if(rem<=0&&!beeped.current.has(0)){beeped.current.add(0);mkBeep(acRef,sndP,"go",muted);vib(300);
+      // Beep thresholds: fire only on 1-second boundary crossings to avoid catch-up bursts after background/lock
+      if(lastRem.current==null) lastRem.current=rem;
+      const jump = lastRem.current - rem;
+      if(jump===1){
+        if(rem===3||rem===2||rem===1){
+          if(!beeped.current.has(rem)){beeped.current.add(rem);mkBeep(acRef,sndP,"count",muted);vib(rem===1?200:100)}
+        }
+        if(rem===0&&!beeped.current.has(0)){
+          beeped.current.add(0);mkBeep(acRef,sndP,"go",muted);vib(300);
+          const nr=gRR.current+1;if(nr>=totalR){doneR.current=true;setDone(true)}
+          else{gRR.current=nr;setGR(nr);rStart.current=Date.now();beeped.current.clear();lastRem.current=intDur;lastRem.current=intDur}
+        }
+      }else if(jump>1){
+        // Large jump (iOS background/lock): do not replay missed beeps
+        beeped.current.clear();
+      }
+      lastRem.current=rem;
+      if(rem<=0&&jump>1){
+        // still advance round if we jumped past end, without replaying beeps
         const nr=gRR.current+1;if(nr>=totalR){doneR.current=true;setDone(true)}
-        else{gRR.current=nr;setGR(nr);rStart.current=Date.now();beeped.current.clear()}}
+        else{gRR.current=nr;setGR(nr);rStart.current=Date.now();beeped.current.clear();lastRem.current=intDur;lastRem.current=intDur}
+      }
     },150);return()=>clearInterval(iv);
   },[paused,totalR,sndP]);
 
   const togglePause=()=>{if(paused){const d=Date.now()-pauseT.current;rStart.current+=d;elStart.current+=d;setPaused(false)}else{pauseT.current=Date.now();setPaused(true)}};
-  const goNext=()=>{const n=gRR.current+1;if(n>=totalR){doneR.current=true;setDone(true);return}gRR.current=n;setGR(n);rStart.current=Date.now();beeped.current.clear();setSec(60)};
-  const goPrev=()=>{if(gRR.current<=0)return;gRR.current-=1;setGR(gRR.current);rStart.current=Date.now();beeped.current.clear();setSec(60)};
+  const goNext=()=>{onUserGesture&&onUserGesture();const n=gRR.current+1;if(n>=totalR){doneR.current=true;setDone(true);return}gRR.current=n;setGR(n);rStart.current=Date.now();beeped.current.clear();lastRem.current=intDur;setSec(60)};
+  const goPrev=()=>{onUserGesture&&onUserGesture();if(gRR.current<=0)return;gRR.current-=1;setGR(gRR.current);rStart.current=Date.now();beeped.current.clear();lastRem.current=intDur;setSec(60)};
   const trigStop=t=>{if(!paused){pauseT.current=Date.now();setPaused(true)}setConfAct(t)};
   const cancelConf=()=>{setConfAct(null);if(pauseT.current){const d=Date.now()-pauseT.current;rStart.current+=d;elStart.current+=d}setPaused(false)};
   const confStop=()=>{setConfAct(null);stoppedR.current=true;setStoppedE(true);doneR.current=true;setDone(true)};
@@ -794,7 +807,7 @@ function Timer({exercises,sets,onFinish,muted,mutedSt,toggleMute,sndP,accent,fre
   const prog=sec/60;const ringCol=getRingCol(sec,dynRing);
 
   return(
-    <div style={S.timerWrap}>
+    <div style={S.timerWrap} onPointerDown={onUserGesture} onTouchStart={onUserGesture}>
       <div style={{width:"100%",maxWidth:500,margin:"0 auto",paddingTop:"max(12px, env(safe-area-inset-top, 12px))"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4,padding:"0 4px"}}>
           <div>{isFS?<span style={{...S.roundLbl,color:accent}}>Freestyle · Round {gR+1}{freeRounds?` / ${freeRounds}`:""}</span>
@@ -885,7 +898,7 @@ function Complete({data,exercises,sets,wkName,onHome,onFreestyle,logs,accent,onR
     catch{try{const ta=document.createElement("textarea");ta.value=genSum();document.body.appendChild(ta);ta.select();document.execCommand("copy");document.body.removeChild(ta);setCopied(true);setTimeout(()=>setCopied(false),2000)}catch{}}};
   const handleRPE=v=>{setRpe(v);onRPE(v)};
 
-  return(<div style={S.timerWrap}>
+  return(<div style={S.timerWrap} onPointerDown={onUserGesture} onTouchStart={onUserGesture}>
     <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",textAlign:"center",padding:20}}>
       <div style={{fontSize:48,marginBottom:12}}>{data.freestyle?"⚡":data.partial?"⏹":"🏁"}</div>
       <h2 style={{fontSize:22,fontWeight:800,letterSpacing:3,margin:"0 0 4px"}}>{data.freestyle?"Freestyle Complete":data.partial?"Workout Stopped":"Workout Complete"}</h2>
@@ -936,16 +949,50 @@ function EmomApp(){
   const{cxs,save:saveCx,del:delCx,restoreDefaults}=useCxLib();
   const sndP=SOUNDS[sndIdx]||SOUNDS[0];
 
-  const initAudio=()=>{if(!acRef.current)try{acRef.current=new(window.AudioContext||window.webkitAudioContext)()}catch{}};
-  const toggleMute=()=>{mutedRef.current=!mutedRef.current;setMutedSt(mutedRef.current);store.set(STORE_MUTE,mutedRef.current)};
-  const handleStart=()=>{initAudio();stRef.current=new Date();fsRef.current=null;setScreen("countdown")};
-  const handleFS=dur=>{initAudio();stRef.current=new Date();fsRef.current={rounds:dur};setScreen("countdown")};
-  const handlePostFS=()=>{initAudio();stRef.current=new Date();fsRef.current={rounds:null};setScreen("countdown")};
-  const handleCDDone=useCallback(()=>setScreen("timer"),[]);
-  const handleCDCancel=useCallback(()=>setScreen("home"),[]);
+  // v3.2.1: iOS PWA lifecycle guardrails (audio + wake lock)
+  const wlRef=useRef(null);
+  const wlWanted=useRef(false);
+  const acquireWake=useCallback(async()=>{
+    wlWanted.current=true;
+    if(!("wakeLock" in navigator) || !navigator.wakeLock || !navigator.wakeLock.request) return;
+    try{
+      if(wlRef.current) return;
+      const s=await navigator.wakeLock.request("screen");
+      wlRef.current=s;
+      // Re-acquire if OS releases while workout active
+      s.addEventListener("release",()=>{wlRef.current=null;if(wlWanted.current) acquireWake();});
+    }catch{}
+  },[]);
+  const releaseWake=useCallback(()=>{
+    wlWanted.current=false;
+    try{wlRef.current&&wlRef.current.release&&wlRef.current.release().catch(()=>{});}catch{}
+    wlRef.current=null;
+  },[]);
+  useEffect(()=>{
+    const onVis=()=>{if(document.visibilityState==="visible" && wlWanted.current) acquireWake()};
+    document.addEventListener("visibilitychange",onVis);
+    return()=>document.removeEventListener("visibilitychange",onVis);
+  useEffect(()=>{if(screen!=="countdown"&&screen!=="timer")releaseWake()},[screen,releaseWake]);
+
+  },[acquireWake]);
+
+  const initAudio=()=>{
+    if(!acRef.current)try{acRef.current=new(window.AudioContext||window.webkitAudioContext)()}catch{}
+    try{acRef.current&&acRef.current.state==="suspended"&&acRef.current.resume&&acRef.current.resume().catch(()=>{});}catch{}
+  };
+  const onUserGesture=()=>{
+    // Called from user taps within Timer/Countdown to re-arm audio + wake lock after iOS lock/background
+    initAudio(); if(screen==="countdown"||screen==="timer") acquireWake();
+  };
+  const toggleMute=()=>{initAudio();mutedRef.current=!mutedRef.current;setMutedSt(mutedRef.current);store.set(STORE_MUTE,mutedRef.current)};
+  const handleStart=()=>{initAudio();acquireWake();stRef.current=new Date();fsRef.current=null;setScreen("countdown")};
+  const handleFS=dur=>{initAudio();acquireWake();stRef.current=new Date();fsRef.current={rounds:dur};setScreen("countdown")};
+  const handlePostFS=()=>{initAudio();acquireWake();stRef.current=new Date();fsRef.current={rounds:null};setScreen("countdown")};
+const handleCDDone=useCallback(()=>setScreen("timer"),[]);
+  const handleCDCancel=useCallback(()=>{releaseWake();setScreen("home")},[releaseWake]);
   const handleSetCd=v=>{setCdSecs(v);store.set(STORE_CD,v)};
 
-  const handleFinish=useCallback(data=>{
+  const handleFinish=useCallback(data=>{releaseWake();
     const id=Date.now();logIdRef.current=id;
     addLog({id,startTime:stRef.current.toISOString(),workoutName:data.freestyle?"Freestyle":wkName,
       exercises:data.freestyle?[]:exercises.map(e=>isCx(e)?{name:e.name,movements:e.movements,weight:e.weight}:{name:e.name,reps:e.reps,weight:e.weight}),
@@ -963,8 +1010,8 @@ function EmomApp(){
 
   const goHome=()=>setScreen("home");
 
-  if(screen==="countdown")return <Countdown onDone={handleCDDone} onCancel={handleCDCancel} muted={mutedRef} sndP={sndP} accent={accent} cdSecs={cdSecs} acRef={acRef}/>;
-  if(screen==="timer")return <Timer exercises={exercises} sets={sets} onFinish={handleFinish} muted={mutedRef} mutedSt={mutedSt} toggleMute={toggleMute} sndP={sndP} accent={accent} freeMode={!!fsRef.current} freeRounds={fsRef.current?.rounds} acRef={acRef}/>;
+  if(screen==="countdown")return <Countdown onDone={handleCDDone} onCancel={handleCDCancel} muted={mutedRef} sndP={sndP} accent={accent} cdSecs={cdSecs} acRef={acRef} onUserGesture={onUserGesture}/>;
+  if(screen==="timer")return <Timer exercises={exercises} sets={sets} onFinish={handleFinish} muted={mutedRef} mutedSt={mutedSt} toggleMute={toggleMute} sndP={sndP} accent={accent} freeMode={!!fsRef.current} freeRounds={fsRef.current?.rounds} acRef={acRef} onUserGesture={onUserGesture}/>;
   if(screen==="complete")return <Complete data={compData} exercises={exercises} sets={sets} wkName={wkName} onHome={goHome} onFreestyle={handlePostFS} logs={logs} accent={accent} onRPE={handleRPE} lib={lib} onFSLog={handleFSLog}/>;
   if(screen==="logs")return <LogsScreen logs={logs} del={delLog} onBack={goHome}/>;
   if(screen==="stats")return <StatsScreen logs={logs} reset={resetLogs} onBack={goHome}/>;
