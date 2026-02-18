@@ -70,7 +70,7 @@ function mkBeep(acRef,p,type,muted){
   if(muted&&muted.current)return;
   if(!acRef||!acRef.current)return;
   try{
-    const ac=acRef.current;if(ac.state==="suspended")ac.resume();
+    const ac=acRef.current;if(ac.state==="closed")return;if(ac.state==="suspended"&&ac.resume)ac.resume().catch(()=>{});
     const go=type==="go",f=go?p.gF:p.cF,d=go?p.gD:p.cD,v=go?p.gV:p.cV;
     const tone=(freq,dur,vol,del=0)=>{const o=ac.createOscillator(),g=ac.createGain();o.type=p.wave;o.connect(g);g.connect(ac.destination);o.frequency.value=freq;g.gain.value=vol;if(p.chirp){o.frequency.setValueAtTime(freq,ac.currentTime+del);o.frequency.linearRampToValueAtTime(freq*1.5,ac.currentTime+del+dur/1000)}o.start(ac.currentTime+del);o.stop(ac.currentTime+del+dur/1000)};
     tone(f,d,v);if(p.dbl&&go)tone(f*1.2,d,v,0.15);
@@ -637,7 +637,7 @@ function Builder({exercises,setExercises,sets,setSets,onStart,onFreestyle,lib,ad
         <div style={{fontSize:36,marginBottom:8}}>⏱</div>
         <h1 style={S.titleMain}>CS Kettlebell</h1>
         <h1 style={{...S.titleSub,color:accent}}>EMOM Timer</h1>
-        <div style={{fontSize:12,color:"#555",marginTop:-6,marginBottom:10}}>v3.2.2</div>
+        <div style={{fontSize:12,color:"#555",marginTop:-6,marginBottom:10}}>v3.2.3</div>
         {streak>0&&<div style={{fontSize:12,color:"#555",marginTop:6}}>🔥 {streak} day streak</div>}
       </div>
       <div style={{marginBottom:12}}>
@@ -716,7 +716,7 @@ function Countdown({onDone,onCancel,muted,sndP,accent,cdSecs,acRef,onUserGesture
   useEffect(()=>{
     const iv=setInterval(()=>{if(can.current)return;const el=Math.floor((Date.now()-st.current)/1000);const rem=cdSecs-el;
       if(rem<=0){clearInterval(iv);if(!beeped.current.has(0)){beeped.current.add(0);mkBeep(acRef,sndP,"go",muted)}onDone();return}
-      if(rem<=3&&!beeped.current.has(rem)){beeped.current.add(rem);mkBeep(acRef,sndP,"count",muted);vib(50)}setCount(rem);
+      if(rem<=3&&!beeped.current.has(rem)){beeped.current.add(rem);mkBeep(acRef,sndP,rem===1?"go":"count",muted);vib(50)}setCount(rem);
     },100);return()=>clearInterval(iv);
   },[onDone,sndP,cdSecs]);
   const startNow=()=>{onUserGesture&&onUserGesture();can.current=true;onDone()};
@@ -792,15 +792,13 @@ function Timer({exercises,sets,onFinish,muted,mutedSt,toggleMute,sndP,accent,fre
         if(rem===3||rem===2||rem===1){
           if(!beeped.current.has(rem)){
             beeped.current.add(rem);
-            mkBeep(acRef,sndP,"count",muted);
+            mkBeep(acRef,sndP,rem===1?"go":"count",muted);
             vib(rem===1?200:100);
           }
         }
         if(rem===intDur && prev===1 && !beeped.current.has(0)){
           // optional: if we were at 1 then rolled, treat as GO (kept minimal)
           beeped.current.add(0);
-          mkBeep(acRef,sndP,"go",muted);
-          vib(300);
           const nr=gRR.current+1;
           if(nr>=totalR){doneR.current=true;setDone(true)}
           else{gRR.current=nr;setGR(nr);rStart.current=Date.now();beeped.current.clear();lastRem.current=intDur;setSec(intDur)}
@@ -1002,13 +1000,20 @@ function EmomApp(){
     const onVis=()=>{if(document.visibilityState==="visible" && wlWanted.current) acquireWake()};
     document.addEventListener("visibilitychange",onVis);
     return()=>document.removeEventListener("visibilitychange",onVis);
+  },[acquireWake]);
   useEffect(()=>{if(screen!=="countdown"&&screen!=="timer")releaseWake()},[screen,releaseWake]);
 
-  },[acquireWake]);
-
   const initAudio=()=>{
-    if(!acRef.current)try{acRef.current=new(window.AudioContext||window.webkitAudioContext)()}catch{}
-    try{acRef.current&&acRef.current.state==="suspended"&&acRef.current.resume&&acRef.current.resume().catch(()=>{});}catch{}
+    try{
+      const Ctx=(window.AudioContext||window.webkitAudioContext);
+      if(!Ctx) return;
+      if(!acRef.current || acRef.current.state==="closed"){
+        acRef.current=new Ctx();
+      }
+      if(acRef.current && acRef.current.state==="suspended" && acRef.current.resume){
+        acRef.current.resume().catch(()=>{});
+      }
+    }catch{}
   };
   const onUserGesture=()=>{
     // Called from user taps within Timer/Countdown to re-arm audio + wake lock after iOS lock/background
